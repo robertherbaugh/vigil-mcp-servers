@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version: "0.13.10"
+      - run: uv sync --frozen
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run pytest
+
+  dco:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Every commit is signed off
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for sha in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            if ! git log -1 --format=%B "$sha" | grep -q '^Signed-off-by: '; then
+              echo "::error::commit $sha has no Signed-off-by line (git commit -s)"
+              missing=1
+            fi
+          done
+          exit $missing
+
+  image:
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      matrix:
+        server: [_template]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build
+        run: docker build -f servers/${{ matrix.server }}/Dockerfile -t ci/${{ matrix.server }} .
+      - name: Smoke test (non-root, read-only, 401 without a token)
+        run: |
+          docker run -d --name smoke --read-only --cap-drop ALL -p 8000:8000 \
+            -e MCP_TOKEN="$(openssl rand -base64 32)" -e TARGET_ALLOW=192.0.2.0/24 \
+            -e MCP_ALLOWED_HOSTS='127.0.0.1:*' ci/${{ matrix.server }}
+          for i in $(seq 1 20); do curl -fs http://127.0.0.1:8000/healthz && break; sleep 1; done
+          test "$(docker exec smoke id -u)" = 10001
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8000/mcp)" = 401
+          docker rm -f smoke
