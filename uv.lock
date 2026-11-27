@@ -934,7 +934,7 @@ requires-dist = [{ name = "vigil-mcp-common", editable = "packages/vigil_mcp_com
 
 [[package]]
 name = "vigil-wazuh5-bridge"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "servers/wazuh5-bridge" }
 dependencies = [
     { name = "httpx" },

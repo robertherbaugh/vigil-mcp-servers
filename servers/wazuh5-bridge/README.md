@@ -15,7 +15,7 @@ So the bridge suppresses where findings are consumed. **Nothing is deleted:** Wa
 
 1. Every `POLL_INTERVAL_SECONDS` it searches `wazuh-findings-v5-*` for `@timestamp` in `[cursor - overlap, now]`, oldest first, with `search_after`. The overlap catches findings that the indexer writes late.
 2. For each finding it has not handled yet, the first active suppression that matches holds it back. Otherwise it is mapped to a Vigil finding: `wazuh5-<_id>`, the rule title, severity, MITRE techniques, host, user and IPs, with the Wazuh document as raw data.
-3. It posts batches to Vigil's `POST /api/ingest/ingest-string` with a service-account token. Vigil skips an id it already has, so a retry never duplicates a finding.
+3. It posts batches to Vigil's `POST /api/ingest/ingest-string` as JSON Lines, with a service-account token. Vigil skips an id it already has, so a retry never duplicates a finding. JSON Lines cannot carry cases, so the token needs only `findings.read` and `findings.write` (a JSON payload makes Vigil ask for `cases.write` too).
 4. The cursor moves only when every batch of the poll arrived. A failure repeats the poll.
 
 After a restart it starts `INITIAL_LOOKBACK_HOURS` back. After an outage longer than `MAX_LOOKBACK_HOURS` it logs a **gap** (`wazuh5_bridge_errors{stage="gap"}`). Those findings are still in Wazuh, but Vigil does not get them.

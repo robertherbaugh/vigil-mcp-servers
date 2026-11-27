@@ -224,8 +224,9 @@ def test_vigil_ingest_posts_the_form():
     VigilIngest(client).send([mapping.to_vigil(hit(k8s_pod("admin"), "c" * 22))])
     assert seen["path"] == "/api/ingest/ingest-string"
     assert seen["auth"] == "Bearer t"
-    assert seen["form"]["format"] == "json" and seen["form"]["data_type"] == "finding"
-    assert json.loads(seen["form"]["data"])["findings"][0]["finding_id"] == "wazuh5-" + "c" * 22
+    assert seen["form"]["format"] == "jsonl" and seen["form"]["data_type"] == "finding"
+    lines = seen["form"]["data"].splitlines()
+    assert [json.loads(line)["finding_id"] for line in lines] == ["wazuh5-" + "c" * 22]
 
 
 def test_vigil_rejections_raise():

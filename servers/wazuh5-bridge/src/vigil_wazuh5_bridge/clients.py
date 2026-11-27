@@ -63,6 +63,10 @@ class VigilIngest:
 
     The token needs ``findings.read`` and ``findings.write``. Vigil skips a
     finding id it already has, so a retry never duplicates a finding.
+
+    JSON Lines, not JSON: a JSON payload may also carry a ``cases`` array, so Vigil
+    asks for ``cases.write`` too. A JSON Lines payload of findings cannot create
+    cases, so the token needs only the two findings permissions.
     """
 
     PATH = "/api/ingest/ingest-string"
@@ -74,8 +78,8 @@ class VigilIngest:
         if not findings:
             return {"findings_imported": 0, "findings_skipped": 0, "findings_errors": 0}
         form = {
-            "data": json.dumps({"findings": list(findings)}, default=str),
-            "format": "json",
+            "data": "\n".join(json.dumps(f, default=str) for f in findings),
+            "format": "jsonl",
             "data_type": "finding",
         }
         try:
