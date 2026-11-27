@@ -1,0 +1,61 @@
+# Example suppressions for a Kubernetes cluster that runs Wazuh 5 agents on its nodes.
+# Copy it, keep only what your data shows, and name your own nodes. Validate a change with
+#   vigil-wazuh5-bridge validate suppressions.yaml
+# and see what it would hold back, read only, with
+#   vigil-wazuh5-bridge report --hours 24 --file suppressions.yaml
+#
+# Rules for an entry (the bridge refuses a file that breaks them):
+# - rule_ids AND at least one match condition. A rule id alone is too broad.
+# - Every condition must hold. A missing field fails its condition, so the finding is forwarded.
+# - review_by at most a year ahead. After it, the entry stops suppressing until someone reviews it.
+# - Operators: equals, in, prefix (3 characters or more), regex (re.search; not one that matches
+#   an empty string).
+version: 1
+suppressions:
+  - id: veth-promiscuous-kernel
+    description: Pod network interfaces enter and leave promiscuous mode.
+    reason: >-
+      Each pod's veth interface joins the CNI bridge, and the kernel sets promiscuous mode
+      without a login session (auid unset). A person running tcpdump has an auid, and a
+      physical NIC has another name, so both are still forwarded.
+    review_by: "2027-05-31"
+    rule_ids:
+      - 698ba849-5c22-5503-907f-4c74d3a2bb34   # Network interface entered promiscuous mode
+      - 1316fa20-b8b8-5362-8201-a65b6fc50c2c   # Configuration modified (same auditd record)
+    match:
+      - {field: event.original, regex: '\bdev=veth[0-9a-f]+\b'}
+      - {field: event.original, regex: '\bauid=4294967295\b'}
+
+  - id: k8s-controllers-pod-lifecycle
+    description: Built-in controllers create and delete pods.
+    reason: >-
+      The "Cloud VM instance started/terminated" rules match Kubernetes pod creates and
+      deletes. These controllers do that all day (Jobs, ReplicaSets, garbage collection).
+      People, other service accounts and other resources are still forwarded.
+    review_by: "2027-05-31"
+    rule_ids:
+      - d1a226e6-6056-53e5-af04-ef74f4997cf4   # Cloud VM instance terminated
+      - 37258b8d-acd0-560e-a506-b71d5940e027   # Cloud VM instance started
+    match:
+      - field: user.name
+        in:
+          - system:serviceaccount:kube-system:generic-garbage-collector
+          - system:serviceaccount:kube-system:job-controller
+          - system:serviceaccount:kube-system:replicaset-controller
+          - system:serviceaccount:kube-system:statefulset-controller
+          - system:serviceaccount:kube-system:daemon-set-controller
+          - system:serviceaccount:kube-system:node-controller
+      - {field: orchestrator.resource.type, equals: pods}
+
+  - id: k8s-kubelet-own-pods
+    description: Each node's kubelet manages the pods on that node.
+    reason: >-
+      A kubelet deletes the pods that finish on its node and creates mirror pods for static
+      pods. Name your nodes exactly: an unknown node identity is then still forwarded.
+    review_by: "2027-05-31"
+    rule_ids:
+      - d1a226e6-6056-53e5-af04-ef74f4997cf4
+      - 37258b8d-acd0-560e-a506-b71d5940e027
+    match:
+      - {field: user.name, in: ["system:node:node-a", "system:node:node-b"]}
+      - {field: orchestrator.resource.type, equals: pods}

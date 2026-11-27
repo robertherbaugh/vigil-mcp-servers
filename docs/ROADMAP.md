@@ -56,11 +56,20 @@ Two parts in one service:
 | `create_silence(matchers, ttl_seconds, reason)` | reversible (Grafana's own `endsAt`) | `expire_silence` |
 | `expire_silence(silence_id)` | reversible | re-create |
 
+## wazuh5-bridge: implemented
+
+[`servers/wazuh5-bridge`](../servers/wazuh5-bridge): Wazuh 5 findings into Vigil, with
+suppressions. Wazuh 5.0 writes Sigma findings to `wazuh-findings-v5-*` in an ECS shape that
+Vigil's OpenSearch integration does not read, and 5.0 cannot tune a single standard rule
+([wazuh-indexer-plugins#1772](https://github.com/wazuh/wazuh-indexer-plugins/issues/1772)).
+When Wazuh ships per-rule exceptions, move each suppression into Wazuh as an exception.
+
 ## wazuh5: planned
 
-Wazuh 5.x reads from the indexer's `wazuh-events-v5-*` and `wazuh-states-*` indices, plus active
-response through the manager API. (Upstream Vigil's Wazuh integration targets the 4.x
-`wazuh-alerts-4.x-*` index pattern.)
+Investigation tools on Wazuh 5.x: reads from the indexer's `wazuh-events-v5-*`,
+`wazuh-findings-v5-*` and `wazuh-states-*` indices, plus active response through the manager
+API. (Upstream Vigil's Wazuh integration reads only the manager API, and its alerts path targets
+the 4.x `wazuh-alerts-4.x-*` index pattern.)
 
 | Tool | Class | Undo |
 |---|---|---|
