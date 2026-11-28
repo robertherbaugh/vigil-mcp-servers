@@ -1,6 +1,6 @@
 [project]
 name = "vigil-host-enroller"
-version = "0.2.0"
+version = "0.2.1"
 description = "Enroll Proxmox VMs with step-ca automatically: a VM proves itself through the Proxmox API, gets a one-time host token, and reports its responder kit"
 readme = "README.md"
 license = "Apache-2.0"

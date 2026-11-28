@@ -10,7 +10,7 @@ ConditionPathExists=!/etc/vigil-enroll/enrolled
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/vigil-enroll/template
-ExecStart=/bin/sh -c 'curl -fsS --proto =https --tlsv1.2 --retry 10 --retry-delay 10 --retry-all-errors -o /run/vigil-bootstrap.sh "$ENROLLER/bootstrap.sh" && exec sh /run/vigil-bootstrap.sh'
+ExecStart=/bin/sh -c 'curl -fsS --proto =https --tlsv1.2 --connect-timeout 10 --max-time 60 --retry 10 --retry-delay 10 --retry-all-errors -o /run/vigil-bootstrap.sh "$ENROLLER/bootstrap.sh" && exec sh /run/vigil-bootstrap.sh'
 # Proxmox may need a minute to see the agent's address. Try again, up to an hour.
 Restart=on-failure
 RestartSec=2min

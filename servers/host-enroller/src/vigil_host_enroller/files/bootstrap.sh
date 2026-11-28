@@ -11,7 +11,8 @@
 #   3. enroll-host.sh: trust the SSH user CA, a host certificate, weekly renewal
 #   4. the responder kit (vigil-respond), with the gateway on its never-block list
 #   5. vigil-enroll-report: a timer that tells the enroller each day that the kit is ready
-# Safe to run again. It changes nothing when a check fails before step 3.
+# Safe to run again. It changes nothing when a check fails before step 3. Each request has a
+# connect timeout of 10 s, so a network that drops the connection fails fast and tries again.
 set -eu
 ENROLLER=@@ENROLLER@@
 CA_URL=@@CA_URL@@
@@ -36,11 +37,11 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
 fetch() { # fetch NAME SHA256 DEST
-  curl -fsS --proto '=https' --tlsv1.2 --retry 3 -o "$3" "$ENROLLER/files/$1" || fail "cannot download $1"
+  curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 300 --retry 3 -o "$3" "$ENROLLER/files/$1" || fail "cannot download $1"
   [ "$(sha256sum "$3" | cut -d' ' -f1)" = "$2" ] || fail "$1: wrong SHA-256"
 }
 post() { # post PATH JSON -> body on stdout; fails with the enroller's reason
-  code=$(curl -sS --proto '=https' --tlsv1.2 -o "$work/answer" -w '%{http_code}' \
+  code=$(curl -sS --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 -o "$work/answer" -w '%{http_code}' \
     -H 'Content-Type: application/json' --data "$2" "$ENROLLER$1") || fail "cannot reach $ENROLLER"
   [ "$code" = 200 ] || fail "the enroller refused ($code): $(head -c 300 "$work/answer")"
   cat "$work/answer"

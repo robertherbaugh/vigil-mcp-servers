@@ -373,3 +373,18 @@ def test_source_address_reaches_the_transport():
     )
     pool = p._client._transport._pool
     assert pool._local_address == "10.30.10.93"
+
+
+def test_every_curl_in_the_host_scripts_has_a_connect_timeout():
+    from importlib import resources
+
+    files = resources.files("vigil_host_enroller") / "files"
+    for name in (
+        "bootstrap.sh",
+        "template.sh",
+        "vigil-enroll-report",
+        "vigil-enroll-firstboot.service",
+    ):
+        for line in (files / name).read_text().splitlines():
+            if "curl " in line and not line.lstrip().startswith("#"):
+                assert "--connect-timeout" in line, (name, line)

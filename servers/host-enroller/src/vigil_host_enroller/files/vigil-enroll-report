@@ -13,6 +13,6 @@ if [ -x /usr/local/sbin/vigil-respond ] && [ -x /usr/local/sbin/vigil-respond-nf
 else
   echo "vigil-enroll-report: the responder kit is not ready; reporting no kit" >&2
 fi
-code=$(curl -sS --proto '=https' --tlsv1.2 --retry 5 --retry-all-errors -o /dev/null -w '%{http_code}' \
+code=$(curl -sS --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 --retry 5 --retry-all-errors -o /dev/null -w '%{http_code}' \
   -H 'Content-Type: application/json' --data "{\"uuid\":\"$UUID\",\"kit\":\"$kit\"}" "$ENROLLER/v1/report")
 [ "$code" = 200 ] || { echo "vigil-enroll-report: the enroller answered $code" >&2; exit 1; }
