@@ -20,7 +20,7 @@ if ! [ -e /usr/sbin/qemu-ga ] && ! [ -e /usr/bin/qemu-ga ]; then
   else fail "install qemu-guest-agent first"; fi
 fi
 tmp=$(mktemp)
-curl -fsS --proto '=https' --tlsv1.2 -o "$tmp" "$ENROLLER/files/vigil-enroll-firstboot.service"
+curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 -o "$tmp" "$ENROLLER/files/vigil-enroll-firstboot.service"
 [ "$(sha256sum "$tmp" | cut -d' ' -f1)" = "$SHA_FIRSTBOOT" ] || { rm -f "$tmp"; fail "wrong SHA-256"; }
 install -m 0644 "$tmp" /etc/systemd/system/vigil-enroll-firstboot.service; rm -f "$tmp"
 install -d -m 0755 /etc/vigil-enroll
