@@ -13,8 +13,8 @@ import pytest
 from starlette.testclient import TestClient
 from vigil_mcp_common import AuditLog, HttpSettings, TokenSet, build_app
 from vigil_mcp_stepca_responder import stepca as sc
-from vigil_mcp_stepca_responder.server import EFFECTS, Hosts, create_server
-from vigil_mcp_stepca_responder.ssh import Result
+from vigil_mcp_stepca_responder.server import EFFECTS, Hosts, InventorySource, create_server
+from vigil_mcp_stepca_responder.ssh import HostUnreachable, Result
 
 CA_KEY = asyncssh.generate_private_key("ssh-ed25519")
 HOST_CA = asyncssh.generate_private_key("ssh-ed25519")
@@ -387,4 +387,121 @@ def test_carrier_respects_never_block():
     _, err = call(client, "block_address", address="192.0.2.9", note="n")
     assert err and "deny list" in err
     assert runner.requests == []
+    client.__exit__(None, None, None)
+
+
+# --- 0.3.0: hosts from the enroller, unreachable hosts -----------------------------------
+
+
+class UnreachableRunner(TwoHostRunner):
+    def __init__(self, failing=(), down=()):
+        super().__init__(failing)
+        self.down = set(down)
+
+    def run(self, host, request, cred, host_ca):
+        if host in self.down:
+            self.requests.append((host, request))
+            raise HostUnreachable("OSError: [Errno 113] No route to host")
+        return super().run(host, request, cred, host_ca)
+
+
+def inventory_source(hosts, status=200, seen=None):
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["authorization"] == "Bearer inv-token"
+        if seen is not None:
+            seen.append(1)
+        if status != 200:
+            return httpx.Response(status)
+        return httpx.Response(200, json={"hosts": [{"address": h} for h in hosts]})
+
+    return InventorySource(
+        url="http://enroller/v1/inventory",
+        token="inv-token",
+        subnets=["10.30.50.0/24"],
+        refresh_seconds=0,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+
+def harness_with(runner, hosts, **kw):
+    tokens = TokenSet({"vigil": TOKEN})
+    server = create_server(
+        tokens=tokens,
+        ca=FakeCA(),
+        runner=runner,
+        hosts=hosts,
+        never_block=["192.0.2.0/24"],
+        carrier_ttl=900,
+        audit=AuditLog("t", io.StringIO()),
+        **kw,
+    )
+    client = TestClient(build_app(server, tokens, HttpSettings(allowed_hosts=("testserver",))))
+    client.__enter__()
+    rpc(
+        client,
+        "initialize",
+        {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "t", "version": "0"},
+        },
+    )
+    return client
+
+
+@pytest.mark.anyio
+async def test_inventory_takes_only_addresses_in_its_subnets():
+    src = inventory_source(["10.30.50.223", "10.30.51.9", "evil.example.com", "10.30.50.7"])
+    assert await src.addresses() == ["10.30.50.223", "10.30.50.7"]
+    hosts = Hosts(["static.example.com"], inventory=src)
+    assert await hosts.current() == ["10.30.50.223", "10.30.50.7", "static.example.com"]
+    assert await hosts.check("10.30.50.7") == "10.30.50.7"
+
+
+@pytest.mark.anyio
+async def test_inventory_keeps_last_list_when_enroller_fails():
+    src = inventory_source(["10.30.50.223"])
+    assert await src.addresses() == ["10.30.50.223"]
+    src._client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(503)))
+    assert await src.addresses() == ["10.30.50.223"]
+    assert "503" in src.error or "HTTPStatusError" in src.error
+
+
+def test_carrier_uses_inventory_hosts_and_skips_unreachable():
+    runner = UnreachableRunner(down={"10.30.50.9"})
+    client = harness_with(
+        runner, Hosts([], inventory=inventory_source(["10.30.50.8", "10.30.50.9"]))
+    )
+    out, err = call(client, "block_address", address="198.51.100.7", note="n")
+    assert err is None, err
+    assert out["state"] == "blocked"
+    assert out["hosts"] == ["10.30.50.8"]
+    assert list(out["unreachable"]) == ["10.30.50.9"]
+    out, _ = call(client, "describe_policy")
+    assert out["hosts"] == ["10.30.50.8", "10.30.50.9"]
+    assert out["inventory"]["subnets"] == ["10.30.50.0/24"]
+    client.__exit__(None, None, None)
+
+
+def test_carrier_fails_when_no_host_is_reachable_or_skip_is_off():
+    client = harness_with(UnreachableRunner(down={"a.example.com"}), Hosts(["a.example.com"]))
+    out, _ = call(client, "block_address", address="198.51.100.7", note="n")
+    assert out["state"] == "failed"
+    client.__exit__(None, None, None)
+    runner = UnreachableRunner(down={"b.example.com"})
+    client = harness_with(runner, Hosts(["a.example.com", "b.example.com"]), skip_unreachable=False)
+    out, _ = call(client, "block_address", address="198.51.100.7", note="n")
+    assert out["state"] == "failed" and "b.example.com" in out["failed"]
+    assert out["rolled_back"] == ["a.example.com"]
+    client.__exit__(None, None, None)
+
+
+def test_refusing_host_still_fails_the_act_with_inventory():
+    runner = UnreachableRunner(failing={"10.30.50.8"}, down={"10.30.50.9"})
+    client = harness_with(
+        runner, Hosts(["a.example.com"], inventory=inventory_source(["10.30.50.8", "10.30.50.9"]))
+    )
+    out, _ = call(client, "block_address", address="198.51.100.7", note="n")
+    assert out["state"] == "failed"
+    assert out["rolled_back"] == ["a.example.com"]
     client.__exit__(None, None, None)

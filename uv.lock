@@ -8,6 +8,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "vigil-host-enroller",
     "vigil-mcp-common",
     "vigil-mcp-stepca-responder",
     "vigil-mcp-template",
@@ -920,6 +921,25 @@ wheels = [
 ]
 
 [[package]]
+name = "vigil-host-enroller"
+version = "0.1.0"
+source = { editable = "servers/host-enroller" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "httpx" },
+    { name = "starlette" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cryptography", specifier = ">=43" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "starlette", specifier = ">=0.48" },
+    { name = "uvicorn", specifier = ">=0.31" },
+]
+
+[[package]]
 name = "vigil-mcp-common"
 version = "0.1.0"
 source = { editable = "packages/vigil_mcp_common" }
@@ -938,7 +958,7 @@ requires-dist = [
 
 [[package]]
 name = "vigil-mcp-stepca-responder"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "servers/stepca-ssh-responder" }
 dependencies = [
     { name = "asyncssh" },

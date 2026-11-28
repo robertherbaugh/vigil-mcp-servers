@@ -24,6 +24,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import anyio
+import httpx
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
@@ -43,11 +44,11 @@ from vigil_mcp_common import (
     tool_meta,
 )
 
-from .ssh import Result, SSHRunner
+from .ssh import HostUnreachable, Result, SSHRunner
 from .stepca import CAError, StepCA
 
 NAME = "vigil-mcp-stepca-responder"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 EFFECTS: dict[str, EffectClass] = {
     "describe_policy": EffectClass.READ,
@@ -61,24 +62,85 @@ EFFECTS: dict[str, EffectClass] = {
 HOST = re.compile(r"^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$")
 
 
-class Hosts:
-    """The hosts this server may act on. Anything else is refused."""
+class InventorySource:
+    """The enrolled hosts with the kit, from the host enroller (servers/host-enroller).
 
-    def __init__(self, names: list[str]):
-        self.names = sorted({n.strip().lower() for n in names if n.strip()})
-        for n in self.names:
+    Only IP addresses inside ``subnets`` are taken: the enroller cannot add a host outside
+    them. Each host must still show a host certificate from the step-ca host CA for that
+    address, and accept the responder's certificate. When the enroller does not answer,
+    the last good list stays.
+    """
+
+    def __init__(
+        self,
+        *,
+        url: str,
+        token: str,
+        subnets: list[str],
+        refresh_seconds: float = 60.0,
+        client: httpx.AsyncClient | None = None,
+    ):
+        if not subnets:
+            raise ValueError("INVENTORY_SUBNETS is required with INVENTORY_URL")
+        self.url, self.refresh_seconds = url, refresh_seconds
+        self.subnets = [ipaddress.ip_network(n.strip(), strict=False) for n in subnets]
+        self._client = client or httpx.AsyncClient(timeout=10)
+        self._headers = {"Authorization": f"Bearer {token}"}
+        self._hosts: list[str] = []
+        self._at = -1e9
+        self.error = ""
+        self._lock = anyio.Lock()
+
+    async def addresses(self) -> list[str]:
+        async with self._lock:
+            if anyio.current_time() - self._at < self.refresh_seconds:
+                return self._hosts
+            try:
+                r = await self._client.get(self.url, headers=self._headers)
+                r.raise_for_status()
+                out = set()
+                for h in r.json().get("hosts", []):
+                    try:
+                        ip = ipaddress.ip_address(str(h.get("address", "")))
+                    except ValueError:
+                        continue
+                    if any(ip in n for n in self.subnets):
+                        out.add(str(ip))
+                self._hosts, self.error = sorted(out), ""
+                self._at = anyio.current_time()
+            except (httpx.HTTPError, ValueError) as exc:
+                self.error = f"{type(exc).__name__}: {str(exc)[:120]}"
+            return self._hosts
+
+
+class Hosts:
+    """The hosts this server may act on: RESPONDER_HOSTS, plus the enroller's list when
+    INVENTORY_URL is set. Anything else is refused."""
+
+    def __init__(self, names: list[str], *, inventory: InventorySource | None = None):
+        self.static = sorted({n.strip().lower() for n in names if n.strip()})
+        for n in self.static:
             if not HOST.match(n):
                 raise ValueError(f"RESPONDER_HOSTS: {n!r} is not a host name")
+        self.inventory = inventory
 
     @classmethod
-    def from_csv(cls, text: str | None) -> Hosts:
-        return cls((text or "").split(","))
+    def from_csv(cls, text: str | None, *, inventory: InventorySource | None = None) -> Hosts:
+        return cls((text or "").split(","), inventory=inventory)
 
-    def check(self, host: str) -> str:
+    async def current(self) -> list[str]:
+        extra = await self.inventory.addresses() if self.inventory else []
+        return sorted({*self.static, *extra})
+
+    async def check(self, host: str) -> str:
         name = (host or "").strip().lower()
-        if name not in self.names:
+        if name not in await self.current():
             raise ToolError(f"{host!r} is not on the responder's host allow list")
         return name
+
+
+class Unreachable(ToolError):
+    """The host could not be reached; it never saw the request."""
 
 
 def _address(address: str) -> str:
@@ -97,6 +159,8 @@ def create_server(
     never_block: list[str],
     ttl: TtlBounds | None = None,
     carrier_ttl: int = 3600,
+    skip_unreachable: bool = True,
+    parallel: int = 8,
     limiter: RateLimiter | None = None,
     audit: AuditLog | None = None,
 ) -> MCPServer:
@@ -147,6 +211,8 @@ def create_server(
             return await anyio.to_thread.run_sync(go)
         except CAError as exc:
             raise ToolError(f"no certificate: {exc}") from exc
+        except HostUnreachable as exc:
+            raise Unreachable(f"{host}: cannot connect ({exc})") from exc
         except OSError as exc:
             raise ToolError(f"{host}: cannot connect ({type(exc).__name__})") from exc
         except Exception as exc:  # asyncssh errors: host key, auth, timeout
@@ -159,11 +225,23 @@ def create_server(
         return r.stdout.strip()
 
     @register("describe_policy", "Describe policy")
-    def describe_policy(ctx: Context) -> dict[str, Any]:
+    async def describe_policy(ctx: Context) -> dict[str, Any]:
         """The hosts, the never-block list, TTL bounds, rate limits and each tool's class."""
         with guard.call(ctx, "describe_policy", EffectClass.READ):
+            inv = hosts.inventory
             return {
-                "hosts": hosts.names,
+                "hosts": await hosts.current(),
+                "static_hosts": hosts.static,
+                "inventory": (
+                    {
+                        "url": inv.url,
+                        "subnets": [str(n) for n in inv.subnets],
+                        "error": inv.error,
+                    }
+                    if inv
+                    else None
+                ),
+                "carrier_skips_unreachable_hosts": skip_unreachable,
                 "never_block": policy.describe(),
                 "ttl_seconds": {"min": ttl.min_seconds, "max": ttl.max_seconds},
                 "rate_limits": limiter.describe(),
@@ -176,14 +254,14 @@ def create_server(
     async def check_host(host: str, ctx: Context) -> dict[str, Any]:
         """Log in to the host with a fresh certificate and check that vigil-respond is ready."""
         with guard.call(ctx, "check_host", EffectClass.READ, host=host):
-            name = hosts.check(host)
+            name = await hosts.check(host)
             return {"host": name, "status": done(name, await respond(name, "check"))}
 
     @register("list_blocks", "List blocks on a host")
     async def list_blocks(host: str, ctx: Context) -> dict[str, Any]:
         """The addresses that vigil-respond blocks on the host, with the time left on each."""
         with guard.call(ctx, "list_blocks", EffectClass.READ, host=host):
-            name = hosts.check(host)
+            name = await hosts.check(host)
             out = done(name, await respond(name, "list-blocks"))
             blocks: list[dict[str, Any]] = []
             for line in out.splitlines():
@@ -221,7 +299,7 @@ def create_server(
             ttl_seconds=ttl_seconds,
             reason=reason[:200],
         ) as ip:
-            name = hosts.check(host)
+            name = await hosts.check(host)
             seconds = ttl.clamp_check(ttl_seconds)
             out = done(name, await respond(name, f"block-ip {ip} {seconds}"))
             return {
@@ -238,7 +316,7 @@ def create_server(
         """End a block before its TTL. The undo of block_ip."""
         # Never-block does not apply to an undo: target is not passed to the guard here.
         with guard.call(ctx, "unblock_ip", EffectClass.REVERSIBLE, host=host, address=address):
-            name = hosts.check(host)
+            name = await hosts.check(host)
             ip = _address(address)
             return {
                 "host": name,
@@ -249,23 +327,37 @@ def create_server(
     # --- Vigil act carrier: block_ip ---------------------------------------------------
     # Vigil's approval pipeline calls a carrier with two arguments only: the target and a
     # note (docs/acts.md upstream). So these act on every allow-listed host, for carrier_ttl
-    # seconds that this server's configuration sets, not the model. All or nothing: when a
-    # host fails, the hosts that succeeded are unblocked again, and the answer says failed.
+    # seconds that this server's configuration sets, not the model. A host that refuses or
+    # fails makes the whole act fail: the hosts that succeeded are unblocked again. A host
+    # that cannot be reached at all (powered off, no route) is skipped and named in the
+    # answer when skip_unreachable is on, so one stopped VM does not stop every block.
 
-    async def each_host(request: str) -> dict[str, tuple[bool, str]]:
-        out: dict[str, tuple[bool, str]] = {}
-        for name in hosts.names:
-            try:
-                out[name] = (True, done(name, await respond(name, request)))
-            except ToolError as exc:
-                out[name] = (False, str(exc))
-        return out
+    async def each_host(request: str) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+        ok: dict[str, str] = {}
+        failed: dict[str, str] = {}
+        unreachable: dict[str, str] = {}
+        limit = anyio.CapacityLimiter(max(1, parallel))
+
+        async def one(name: str) -> None:
+            async with limit:
+                try:
+                    ok[name] = done(name, await respond(name, request))
+                except Unreachable as exc:
+                    (unreachable if skip_unreachable else failed)[name] = str(exc)
+                except ToolError as exc:
+                    failed[name] = str(exc)
+
+        async with anyio.create_task_group() as tg:
+            for name in await hosts.current():
+                tg.start_soon(one, name)
+        return ok, failed, unreachable
 
     @register("block_address", "Block an address on every responder host")
     async def block_address(address: str, note: str, ctx: Context) -> dict[str, Any]:
         """Vigil's block_ip act carrier: drop new traffic from the address on every
         allow-listed host, for this server's fixed TTL. The undo is unblock_address, and the
-        hosts lift the block by themselves when the TTL ends. All or nothing."""
+        hosts lift the block by themselves when the TTL ends. A host that refuses makes it
+        fail and undo; a host that cannot be reached is skipped and named."""
         with guard.call(
             ctx,
             "block_address",
@@ -274,44 +366,49 @@ def create_server(
             ttl_seconds=carrier_ttl,
             note=note[:200],
         ) as ip:
-            if not hosts.names:
+            if not await hosts.current():
                 raise ToolError("the responder has no hosts to act on")
             seconds = ttl.clamp_check(carrier_ttl)
-            results = await each_host(f"block-ip {ip} {seconds}")
-            failed = {h: msg for h, (ok, msg) in results.items() if not ok}
-            if failed:
+            ok, failed, unreachable = await each_host(f"block-ip {ip} {seconds}")
+            if failed or not ok:
                 rolled_back = []
-                for h, (ok, _) in results.items():
-                    if ok:
-                        with contextlib.suppress(ToolError):
-                            done(h, await respond(h, f"unblock-ip {ip}"))
-                            rolled_back.append(h)
+                for h in sorted(ok):
+                    with contextlib.suppress(ToolError):
+                        done(h, await respond(h, f"unblock-ip {ip}"))
+                        rolled_back.append(h)
                 return {
                     "state": "failed",
                     "address": ip,
                     "failed": failed,
+                    "unreachable": unreachable,
                     "rolled_back": rolled_back,
                 }
             return {
                 "state": "blocked",
                 "address": ip,
                 "ttl_seconds": seconds,
-                "hosts": sorted(results),
+                "hosts": sorted(ok),
+                "unreachable": unreachable,
                 "undo": "unblock_address",
             }
 
     @register("unblock_address", "Unblock an address on every responder host")
     async def unblock_address(address: str, note: str, ctx: Context) -> dict[str, Any]:
-        """The undo of block_address: end the block on every allow-listed host."""
+        """The undo of block_address: end the block on every allow-listed host. A host that
+        cannot be reached keeps its block until the TTL ends."""
         with guard.call(
             ctx, "unblock_address", EffectClass.REVERSIBLE, address=address, note=note[:200]
         ):
             ip = _address(address)
-            results = await each_host(f"unblock-ip {ip}")
-            failed = {h: msg for h, (ok, msg) in results.items() if not ok}
+            ok, failed, unreachable = await each_host(f"unblock-ip {ip}")
             if failed:
                 return {"state": "failed", "address": ip, "failed": failed}
-            return {"state": "unblocked", "address": ip, "hosts": sorted(results)}
+            return {
+                "state": "unblocked",
+                "address": ip,
+                "hosts": sorted(ok),
+                "unreachable": unreachable,
+            }
 
     return server
 
@@ -344,17 +441,28 @@ def main(environ: Mapping[str, str] | None = None) -> None:
         user=env.get("SSH_USER", "vigil-responder"), port=int(env.get("SSH_PORT", "22"))
     )
     never = [n.strip() for n in env.get("NEVER_BLOCK", "").split(",") if n.strip()]
+    inventory = None
+    if env.get("INVENTORY_URL"):
+        if not env.get("INVENTORY_TOKEN"):
+            raise SystemExit("INVENTORY_TOKEN is required with INVENTORY_URL")
+        inventory = InventorySource(
+            url=env["INVENTORY_URL"],
+            token=env["INVENTORY_TOKEN"],
+            subnets=[n for n in env.get("INVENTORY_SUBNETS", "").split(",") if n.strip()],
+            refresh_seconds=float(env.get("INVENTORY_REFRESH_SECONDS", "60")),
+        )
     server = create_server(
         tokens=tokens,
         ca=ca,
         runner=runner,
-        hosts=Hosts.from_csv(env.get("RESPONDER_HOSTS")),
+        hosts=Hosts.from_csv(env.get("RESPONDER_HOSTS"), inventory=inventory),
         never_block=never,
         ttl=TtlBounds(
             min_seconds=int(env.get("MIN_TTL_SECONDS", "60")),
             max_seconds=int(env.get("MAX_TTL_SECONDS", "86400")),
         ),
         carrier_ttl=int(env.get("CARRIER_TTL_SECONDS", "3600")),
+        skip_unreachable=env.get("CARRIER_SKIP_UNREACHABLE", "true").lower() != "false",
     )
     serve(build_app(server, tokens, settings), settings)
 

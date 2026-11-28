@@ -1,0 +1,11 @@
+[Unit]
+Description=Report this host's Vigil responder kit to the enroller, daily and at boot
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=1d
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

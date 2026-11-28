@@ -1,0 +1,20 @@
+# In the VM template (template.sh installs it). The first boot of each clone runs bootstrap.sh
+# once. cloud-init makes the clone's own SSH host keys first, so the certificate is for them.
+[Unit]
+Description=Enroll this clone with step-ca and the Vigil responder (first boot)
+After=network-online.target cloud-final.service qemu-guest-agent.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+ConditionPathExists=!/etc/vigil-enroll/enrolled
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/vigil-enroll/template
+ExecStart=/bin/sh -c 'curl -fsS --proto =https --tlsv1.2 --retry 10 --retry-delay 10 --retry-all-errors -o /run/vigil-bootstrap.sh "$ENROLLER/bootstrap.sh" && exec sh /run/vigil-bootstrap.sh'
+# Proxmox may need a minute to see the agent's address. Try again, up to an hour.
+Restart=on-failure
+RestartSec=2min
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=multi-user.target

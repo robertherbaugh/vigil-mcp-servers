@@ -1,0 +1,18 @@
+#!/bin/sh
+# Tell the enroller that this host's responder kit is ready (vigil-enroll-report.timer, each day
+# and at boot). The responder acts only on hosts that reported in the last days, so a deleted or
+# stopped VM leaves its list by itself. The enroller checks this host through Proxmox again.
+set -eu
+. /etc/vigil-enroll/config
+UUID=$(tr 'A-Z' 'a-z' </sys/class/dmi/id/product_uuid)
+kit=""
+# Ready: the forced command, its root helper, the principals file and the nftables table.
+if [ -x /usr/local/sbin/vigil-respond ] && [ -x /usr/local/sbin/vigil-respond-nft ] &&
+   [ -s /etc/ssh/auth_principals/vigil-responder ] && nft list table inet vigil_respond >/dev/null 2>&1; then
+  kit=$KIT_VERSION
+else
+  echo "vigil-enroll-report: the responder kit is not ready; reporting no kit" >&2
+fi
+code=$(curl -sS --proto '=https' --tlsv1.2 --retry 5 --retry-all-errors -o /dev/null -w '%{http_code}' \
+  -H 'Content-Type: application/json' --data "{\"uuid\":\"$UUID\",\"kit\":\"$kit\"}" "$ENROLLER/v1/report")
+[ "$code" = 200 ] || { echo "vigil-enroll-report: the enroller answered $code" >&2; exit 1; }
