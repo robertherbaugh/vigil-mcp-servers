@@ -4,27 +4,18 @@ Every server below is **planned**: none is implemented yet. Tool names, argument
 proposals; they settle when each server is built. Each server will copy `servers/_template` and
 use `vigil_mcp_common` for auth, allowlists, rate limits, audit and TTLs.
 
-## stepca-ssh-responder: planned
+## stepca-ssh-responder: block_ip implemented
 
-Runs pre-defined remediation commands over SSH. For each action, the server gets a fresh
-**short-lived SSH user certificate** from step-ca for one scoped principal, uses it once, and
-forgets it. The model never sees the certificate, the key, or a shell.
+[`servers/stepca-ssh-responder`](../servers/stepca-ssh-responder): `block_ip` and `unblock_ip`
+(reversible, with nftables timeouts on the host), `list_blocks` and `check_host` (read). One
+short-lived step-ca certificate per call, with force-command, no PTY and a source address.
 
-- **Credentials:** a step-ca provisioner that can only issue SSH user certificates for the
-  responder's principals; certificate lifetime in minutes.
-- **Commands:** named in server config, each with typed arguments, e.g.
-  `kill_session(host, user)`, `restart_service(host, unit)`, `quarantine_file(host, path)` where
-  `path` must match a configured prefix. No free-form command.
-- **Hosts:** allow list plus deny list. Known host keys pinned; no trust on first use.
-- **Force-command friendly:** each command maps to one principal, so the target host can pin
-  `force-command` (or an `AuthorizedPrincipalsCommand`) per principal. A stolen certificate can
-  then run only its one script.
+Next, each as its own host verb with its own checks:
 
 | Tool | Class | Undo |
 |---|---|---|
-| `list_commands` | read | n/a |
-| `describe_policy` | read | n/a |
-| `run_remediation(host, command, args)` | per command: reversible (`kill_session`) or irreversible (`quarantine_file` without a restore) | per command |
+| `kill_sessions(host, user)` | irreversible | n/a |
+| `lock_account(host, user, ttl_seconds)` | reversible (a timer unlocks it) | `unlock_account` |
 
 ## unifi-containment: planned
 

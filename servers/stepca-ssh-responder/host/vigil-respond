@@ -1,0 +1,35 @@
+#!/bin/sh
+# vigil-respond: the only command a vigil-responder SSH certificate can run (force-command in the
+# certificate, and command= in the principals file). It reads the request from
+# SSH_ORIGINAL_COMMAND, accepts only the verbs below with checked arguments, and asks the root
+# helper (one sudo rule) to apply them. Every request is logged with logger(1), so the host's
+# log collector sends it to the SIEM.
+#
+#   block-ip <ipv4|ipv6> <seconds>   drop new traffic from the address; nftables expires it
+#   unblock-ip <ipv4|ipv6>           end a block early
+#   list-blocks                      the blocked addresses and the time left
+#   check                            the helper and the nftables table are in place
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+HELPER=/usr/local/sbin/vigil-respond-nft
+REQ=${SSH_ORIGINAL_COMMAND:-}
+
+say() { logger -t vigil-respond -p auth.notice -- "$*" 2>/dev/null || true; }
+refuse() { say "refused: $1 (request: $(printf %s "$REQ" | tr -cd '[:print:]' | cut -c1-120))"; echo "refused: $1" >&2; exit 2; }
+
+# One line of letters, digits and . : / - and spaces only: no shell syntax can pass.
+case "$REQ" in *[!A-Za-z0-9.:/\ -]*|"") refuse "bad characters or empty request" ;; esac
+[ "${#REQ}" -le 128 ] || refuse "request too long"
+# shellcheck disable=SC2086  # word splitting on the checked request is intended
+set -- $REQ
+verb=${1:-}; shift || true
+
+case "$verb" in
+  block-ip)   [ $# -eq 2 ] || refuse "block-ip <address> <seconds>" ;;
+  unblock-ip) [ $# -eq 1 ] || refuse "unblock-ip <address>" ;;
+  list-blocks|check) [ $# -eq 0 ] || refuse "$verb takes no arguments" ;;
+  *) refuse "unknown verb" ;;
+esac
+
+say "request: $verb $*"
+exec sudo -n "$HELPER" "$verb" "$@"

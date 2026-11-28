@@ -22,8 +22,8 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]
-# assert is how pytest checks; fixed test tokens are not secrets.
-"**/tests/**" = ["S101", "S105", "S106"]
+# assert is how pytest checks; fixed test tokens are not secrets; tests run the host scripts with sh.
+"**/tests/**" = ["S101", "S105", "S106", "S603", "S607"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages", "servers"]

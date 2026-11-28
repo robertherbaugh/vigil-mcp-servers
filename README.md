@@ -23,6 +23,7 @@ See [docs/DESIGN.md](docs/DESIGN.md).
 | [`servers/_template`](servers/_template) | A minimal server to copy: read tools plus a harmless "rehearsal" action for drilling Vigil's approval and undo flow | Working, tested |
 | [`servers/wazuh5-bridge`](servers/wazuh5-bridge) | Forwards Wazuh 5 findings (`wazuh-findings-v5-*`) to Vigil, with reviewed, narrow suppressions for normal-operation noise. Nothing is deleted in Wazuh. A worker, not an MCP server | Working, tested |
 | [`servers/wazuh5`](servers/wazuh5) | Read-only MCP tools on Wazuh 5 for investigations: search findings and events, follow a finding to its triggering event, top values, host inventory. Bounded, term-only queries | Working, tested |
+| [`servers/stepca-ssh-responder`](servers/stepca-ssh-responder) | Reversible response: block an IP on one host for a fixed time, over SSH with a short-lived step-ca certificate per call. Host kit included: forced command, one sudo rule, nftables sets that expire blocks by themselves | Working, tested end to end |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | `stepca-ssh-responder`, `unifi-containment`, `grafana-alerts-bridge`, `wazuh5`, `security-onion` | Planned |
 
 ## Quick start

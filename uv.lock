@@ -9,6 +9,7 @@ resolution-markers = [
 [manifest]
 members = [
     "vigil-mcp-common",
+    "vigil-mcp-stepca-responder",
     "vigil-mcp-template",
     "vigil-mcp-wazuh5",
     "vigil-wazuh5-bridge",
@@ -41,6 +42,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a1/98/7e457a3b014976887a050561955c0b76e1e7e2d6e27b78ecef2ef80518f2/anyio-4.16.0.tar.gz", hash = "sha256:59bb03251907983d1603d27c3087ddb1e93299ea2163adcdba37899a4fb12ffb", size = 310971, upload-time = "2026-11-01T11:20:07.282Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/16/7757fb84c819accc7d7e9af5291b261e4abb8627ee040f99e7d35ef2457a/anyio-4.16.0-py3-none-any.whl", hash = "sha256:c66ae634e0b8228396b801741beb3294326d4b6102f7bba4041c0dfb58c29026", size = 134521, upload-time = "2026-11-01T11:20:05.59Z" },
+]
+
+[[package]]
+name = "asyncssh"
+version = "2.24.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/53/e6/34d6b8007ed5a39d234ca39494ef54facaa63ac9f4a613fe2add9e6c83d0/asyncssh-2.24.2.tar.gz", hash = "sha256:d55e313d66717a697d940f55adf5eeef7d740b4b7d177fe004212ee98e337bef", size = 608185, upload-time = "2026-11-27T23:17:52.773Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/1c/473a5767de1dcab80e5fd92e4247efd783b8a87e8e8094175ec97f9b129a/asyncssh-2.24.2-py3-none-any.whl", hash = "sha256:2e580c8a03a39f1d0e02b29b9cfd0a26ef8f0fd1c262dc5305ecd0e9a80d7db8", size = 395915, upload-time = "2026-11-27T23:17:51.295Z" },
 ]
 
 [[package]]
@@ -920,6 +934,23 @@ requires-dist = [
     { name = "mcp", specifier = ">=2.3,<3" },
     { name = "starlette", specifier = ">=0.48" },
     { name = "uvicorn", specifier = ">=0.31" },
+]
+
+[[package]]
+name = "vigil-mcp-stepca-responder"
+version = "0.1.0"
+source = { editable = "servers/stepca-ssh-responder" }
+dependencies = [
+    { name = "asyncssh" },
+    { name = "httpx" },
+    { name = "vigil-mcp-common" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asyncssh", specifier = ">=2.17" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "vigil-mcp-common", editable = "packages/vigil_mcp_common" },
 ]
 
 [[package]]
