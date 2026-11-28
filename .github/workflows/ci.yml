@@ -52,6 +52,7 @@ jobs:
           - {server: wazuh5, kind: mcp}
           - {server: stepca-ssh-responder, kind: mcp}
           - {server: wazuh5-bridge, kind: worker}
+          - {server: host-enroller, kind: enroller}
     env:
       SERVER: ${{ matrix.server }}
       # One image per job, so a fixed tag. A tag can't start with "_" (_template).
@@ -81,3 +82,18 @@ jobs:
           docker run --rm --read-only --cap-drop ALL \
             -v "$PWD/servers/$SERVER/examples:/examples:ro" "$IMAGE" \
             vigil-wazuh5-bridge validate /examples/suppressions.example.yaml
+      - name: Smoke test (non-root, read-only, serves the kit and the step CLI)
+        if: matrix.kind == 'enroller'
+        run: |
+          docker run -d --name smoke --read-only --tmpfs /tmp --cap-drop ALL -p 8080:8080 \
+            -e PUBLIC_URL=https://enroll.example.net -e STEPCA_URL=https://192.0.2.1 \
+            -e STEPCA_FINGERPRINT="$(printf '0%.0s' $(seq 64))" -e ENROLL_ALLOW=192.0.2.0/24 \
+            -e ENROLL_KEY_SEED="$(openssl rand -hex 32)" -e INVENTORY_TOKEN="$(openssl rand -hex 32)" \
+            -e PVE_URL=https://192.0.2.1:8006 -e PVE_TOKEN_ID='ci@pve!ci' -e PVE_TOKEN_SECRET=ci \
+            -e STATE_FILE=/tmp/inventory.json "$IMAGE"
+          for i in $(seq 1 20); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
+          test "$(docker exec smoke id -u)" = 10001
+          curl -fs http://127.0.0.1:8080/healthz | grep -q '"step_cli":true'
+          curl -fs http://127.0.0.1:8080/healthz | grep -q '"kit":"[0-9]'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/v1/inventory)" = 401
+          docker rm -f smoke

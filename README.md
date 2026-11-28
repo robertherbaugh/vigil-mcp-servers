@@ -24,6 +24,7 @@ See [docs/DESIGN.md](docs/DESIGN.md).
 | [`servers/wazuh5-bridge`](servers/wazuh5-bridge) | Forwards Wazuh 5 findings (`wazuh-findings-v5-*`) to Vigil, with reviewed, narrow suppressions for normal-operation noise. Nothing is deleted in Wazuh. A worker, not an MCP server | Working, tested |
 | [`servers/wazuh5`](servers/wazuh5) | Read-only MCP tools on Wazuh 5 for investigations: search findings and events, follow a finding to its triggering event, top values, host inventory. Bounded, term-only queries | Working, tested |
 | [`servers/stepca-ssh-responder`](servers/stepca-ssh-responder) | Reversible response: block an IP on one host for a fixed time, over SSH with a short-lived step-ca certificate per call. Host kit included: forced command, one sudo rule, nftables sets that expire blocks by themselves | Working, tested end to end |
+| [`servers/host-enroller`](servers/host-enroller) | Enrolls Proxmox VMs with step-ca without a person: a VM proves itself through the Proxmox API (tag, guest-agent address, SMBIOS UUID) and gets a one-time host token, the host kit and a daily report. Keeps the responder's host list. A one-line bootstrap and a template first-boot unit | Working, tested end to end |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | `stepca-ssh-responder`, `unifi-containment`, `grafana-alerts-bridge`, `wazuh5`, `security-onion` | Planned |
 
 ## Quick start

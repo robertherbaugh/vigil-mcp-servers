@@ -31,8 +31,9 @@ Every request is logged on the host with `logger -t vigil-respond`, so your log 
 
 Vigil's chat only calls read tools. Actions go through its approval pipeline: an agent or the chat proposes the act `block_ip` for an address, a person approves it, and Vigil calls the tool bound as that act's **carrier** with exactly two arguments, the address and a note ([`docs/acts.md`](https://github.com/Vigil-SOC/vigil/blob/v1.2.0/docs/acts.md) upstream). `block_address` has that shape:
 
-- It blocks the address on **every** host in `RESPONDER_HOSTS`, for `CARRIER_TTL_SECONDS` (default 3600). The server's configuration sets the duration, not the model.
-- It is all or nothing: when a host fails, the hosts that succeeded are unblocked again, and the answer's `state` is `failed`.
+- It blocks the address on **every** host (`RESPONDER_HOSTS` and the enroller's list), for `CARRIER_TTL_SECONDS` (default 3600). The server's configuration sets the duration, not the model. It reaches up to 8 hosts at a time.
+- A host that **refuses** or fails makes the act fail: the hosts that succeeded are unblocked again, and the answer's `state` is `failed`.
+- A host that **cannot be reached** (no TCP connection: powered off, no route) is skipped and named in `unreachable`, so one stopped VM does not stop every block. If no host succeeds, the act fails. Set `CARRIER_SKIP_UNREACHABLE=false` to make an unreachable host fail the act too.
 - `unblock_address` is its undo (Vigil's "Unblock").
 
 Bind it in Vigil on the tool row `<source>_block_address` (Settings → Limits & autonomy → Outside tools), or with `PUT /api/v1/autonomy/tools/<source>_block_address` and `{"binding": ...}`:
@@ -82,6 +83,8 @@ sudo sh host/install.sh --principal sa-vigil-responder --never-block 192.0.2.1,1
 
 The installer refuses a host without that enrollment, and it never opens SSH by itself. `--uninstall` removes everything, including the nftables table. Then add the host's name (as in its host certificate) to `RESPONDER_HOSTS`.
 
+On Proxmox, [`host-enroller`](../host-enroller) does all of this without a person: the enrollment, the kit, and the host list (`INVENTORY_URL`).
+
 ## Configuration
 
 | Variable | Default | |
@@ -95,6 +98,10 @@ The installer refuses a host without that enrollment, and it never opens SSH by 
 | `SSH_USER`, `SSH_PORT` | `vigil-responder`, `22` | |
 | `MIN_TTL_SECONDS`, `MAX_TTL_SECONDS` | `60`, `86400` | The host helper enforces the same bounds |
 | `CARRIER_TTL_SECONDS` | `3600` | How long `block_address` (Vigil's act) blocks |
+| `CARRIER_SKIP_UNREACHABLE` | `true` | Skip hosts with no TCP connection in `block_address` and `unblock_address` |
+| `INVENTORY_URL`, `INVENTORY_TOKEN` | none | The enroller's `/v1/inventory` and its bearer token. Its hosts are added to `RESPONDER_HOSTS` |
+| `INVENTORY_SUBNETS` | required with `INVENTORY_URL` | Comma-separated CIDRs. Only enroller hosts inside them are taken |
+| `INVENTORY_REFRESH_SECONDS` | `60` | When the enroller does not answer, the last good list stays |
 | `MCP_TOKEN`, `MCP_ALLOWED_HOSTS`, `MCP_PORT` | | As in the other servers |
 
 Host keys must carry a certificate from the step-ca host CA (`/ssh/roots`): no trust-on-first-use.

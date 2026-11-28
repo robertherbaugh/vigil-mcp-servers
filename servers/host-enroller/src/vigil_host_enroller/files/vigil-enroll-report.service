@@ -1,0 +1,8 @@
+[Unit]
+Description=Report this host's Vigil responder kit to the enroller
+After=network-online.target qemu-guest-agent.service vigil-respond.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vigil-enroll-report
