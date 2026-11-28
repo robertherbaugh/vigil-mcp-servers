@@ -15,6 +15,7 @@ Four layers, and this server is only the first:
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import os
@@ -46,7 +47,7 @@ from .ssh import Result, SSHRunner
 from .stepca import CAError, StepCA
 
 NAME = "vigil-mcp-stepca-responder"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 EFFECTS: dict[str, EffectClass] = {
     "describe_policy": EffectClass.READ,
@@ -54,6 +55,8 @@ EFFECTS: dict[str, EffectClass] = {
     "list_blocks": EffectClass.READ,
     "block_ip": EffectClass.REVERSIBLE,
     "unblock_ip": EffectClass.REVERSIBLE,
+    "block_address": EffectClass.REVERSIBLE,
+    "unblock_address": EffectClass.REVERSIBLE,
 }
 HOST = re.compile(r"^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$")
 
@@ -93,12 +96,18 @@ def create_server(
     hosts: Hosts,
     never_block: list[str],
     ttl: TtlBounds | None = None,
+    carrier_ttl: int = 3600,
     limiter: RateLimiter | None = None,
     audit: AuditLog | None = None,
 ) -> MCPServer:
     ttl = ttl or TtlBounds(min_seconds=60, max_seconds=86400)
     limiter = limiter or RateLimiter(
-        {"block_ip": Limit(20, 3600), "unblock_ip": Limit(60, 3600)},
+        {
+            "block_ip": Limit(20, 3600),
+            "unblock_ip": Limit(60, 3600),
+            "block_address": Limit(20, 3600),
+            "unblock_address": Limit(60, 3600),
+        },
         default=Limit(120, 3600),
     )
     audit = audit or AuditLog(NAME)
@@ -158,6 +167,7 @@ def create_server(
                 "never_block": policy.describe(),
                 "ttl_seconds": {"min": ttl.min_seconds, "max": ttl.max_seconds},
                 "rate_limits": limiter.describe(),
+                "carrier_ttl_seconds": carrier_ttl,
                 "certificate": {"principal": ca.username, "lifetime": ca.lifetime},
                 "tools": {name: effect.value for name, effect in EFFECTS.items()},
             }
@@ -236,6 +246,73 @@ def create_server(
                 "result": done(name, await respond(name, f"unblock-ip {ip}")),
             }
 
+    # --- Vigil act carrier: block_ip ---------------------------------------------------
+    # Vigil's approval pipeline calls a carrier with two arguments only: the target and a
+    # note (docs/acts.md upstream). So these act on every allow-listed host, for carrier_ttl
+    # seconds that this server's configuration sets, not the model. All or nothing: when a
+    # host fails, the hosts that succeeded are unblocked again, and the answer says failed.
+
+    async def each_host(request: str) -> dict[str, tuple[bool, str]]:
+        out: dict[str, tuple[bool, str]] = {}
+        for name in hosts.names:
+            try:
+                out[name] = (True, done(name, await respond(name, request)))
+            except ToolError as exc:
+                out[name] = (False, str(exc))
+        return out
+
+    @register("block_address", "Block an address on every responder host")
+    async def block_address(address: str, note: str, ctx: Context) -> dict[str, Any]:
+        """Vigil's block_ip act carrier: drop new traffic from the address on every
+        allow-listed host, for this server's fixed TTL. The undo is unblock_address, and the
+        hosts lift the block by themselves when the TTL ends. All or nothing."""
+        with guard.call(
+            ctx,
+            "block_address",
+            EffectClass.REVERSIBLE,
+            target=_address(address),
+            ttl_seconds=carrier_ttl,
+            note=note[:200],
+        ) as ip:
+            if not hosts.names:
+                raise ToolError("the responder has no hosts to act on")
+            seconds = ttl.clamp_check(carrier_ttl)
+            results = await each_host(f"block-ip {ip} {seconds}")
+            failed = {h: msg for h, (ok, msg) in results.items() if not ok}
+            if failed:
+                rolled_back = []
+                for h, (ok, _) in results.items():
+                    if ok:
+                        with contextlib.suppress(ToolError):
+                            done(h, await respond(h, f"unblock-ip {ip}"))
+                            rolled_back.append(h)
+                return {
+                    "state": "failed",
+                    "address": ip,
+                    "failed": failed,
+                    "rolled_back": rolled_back,
+                }
+            return {
+                "state": "blocked",
+                "address": ip,
+                "ttl_seconds": seconds,
+                "hosts": sorted(results),
+                "undo": "unblock_address",
+            }
+
+    @register("unblock_address", "Unblock an address on every responder host")
+    async def unblock_address(address: str, note: str, ctx: Context) -> dict[str, Any]:
+        """The undo of block_address: end the block on every allow-listed host."""
+        with guard.call(
+            ctx, "unblock_address", EffectClass.REVERSIBLE, address=address, note=note[:200]
+        ):
+            ip = _address(address)
+            results = await each_host(f"unblock-ip {ip}")
+            failed = {h: msg for h, (ok, msg) in results.items() if not ok}
+            if failed:
+                return {"state": "failed", "address": ip, "failed": failed}
+            return {"state": "unblocked", "address": ip, "hosts": sorted(results)}
+
     return server
 
 
@@ -277,6 +354,7 @@ def main(environ: Mapping[str, str] | None = None) -> None:
             min_seconds=int(env.get("MIN_TTL_SECONDS", "60")),
             max_seconds=int(env.get("MAX_TTL_SECONDS", "86400")),
         ),
+        carrier_ttl=int(env.get("CARRIER_TTL_SECONDS", "3600")),
     )
     serve(build_app(server, tokens, settings), settings)
 

@@ -161,6 +161,8 @@ class FakeRunner:
             )
             v6 = '{"nftables": [{"metainfo": {"version": "1.1.3"}}, {"set": {"name": "blocked6"}}]}'
             return Result(0, v4 + "\n" + v6 + "\n", "")
+        if request.startswith("unblock-ip"):
+            return Result(0, f"unblocked {request.split()[1]}\n", "")
         if request == "check":
             return Result(0, "ok\n", "")
         return Result(2, "", "refused: unknown verb")
@@ -311,3 +313,78 @@ def test_no_token(harness):
     h = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
     body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
     assert client.post("/mcp", headers=h, json=body).status_code == 401
+
+
+# --- the Vigil act carrier ----------------------------------------------------------
+
+
+class TwoHostRunner(FakeRunner):
+    def __init__(self, failing=()):
+        super().__init__()
+        self.failing = set(failing)
+
+    def run(self, host, request, cred, host_ca):
+        if host in self.failing and request.startswith("block-ip"):
+            self.requests.append((host, request))
+            return Result(2, "", "refused: nft failed")
+        return super().run(host, request, cred, host_ca)
+
+
+def carrier_harness(failing=()):
+    tokens = TokenSet({"vigil": TOKEN})
+    runner = TwoHostRunner(failing)
+    server = create_server(
+        tokens=tokens,
+        ca=FakeCA(),
+        runner=runner,
+        hosts=Hosts(["a.example.com", "b.example.com"]),
+        never_block=["192.0.2.0/24"],
+        carrier_ttl=900,
+        audit=AuditLog("t", io.StringIO()),
+    )
+    client = TestClient(build_app(server, tokens, HttpSettings(allowed_hosts=("testserver",))))
+    client.__enter__()
+    rpc(
+        client,
+        "initialize",
+        {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "t", "version": "0"},
+        },
+    )
+    return client, runner
+
+
+def test_carrier_takes_exactly_vigils_two_arguments():
+    client, runner = carrier_harness()
+    # Vigil calls {id_arg: target, note_arg: "Vigil <id>: <title>"} and nothing else.
+    out, err = call(
+        client, "block_address", address="198.51.100.7", note="Vigil act-123: Block 198.51.100.7"
+    )
+    assert err is None
+    assert out["state"] == "blocked" and out["ttl_seconds"] == 900
+    assert sorted(h for h, _ in runner.requests) == ["a.example.com", "b.example.com"]
+    assert {r for _, r in runner.requests} == {"block-ip 198.51.100.7 900"}
+    out, _ = call(client, "unblock_address", address="198.51.100.7", note="Vigil: Unblock")
+    assert out["state"] == "unblocked"
+    client.__exit__(None, None, None)
+
+
+def test_carrier_is_all_or_nothing():
+    client, runner = carrier_harness(failing={"b.example.com"})
+    out, err = call(client, "block_address", address="198.51.100.7", note="n")
+    assert err is None
+    assert out["state"] == "failed"
+    assert "b.example.com" in out["failed"]
+    assert out["rolled_back"] == ["a.example.com"]
+    assert ("a.example.com", "unblock-ip 198.51.100.7") in runner.requests
+    client.__exit__(None, None, None)
+
+
+def test_carrier_respects_never_block():
+    client, runner = carrier_harness()
+    _, err = call(client, "block_address", address="192.0.2.9", note="n")
+    assert err and "deny list" in err
+    assert runner.requests == []
+    client.__exit__(None, None, None)

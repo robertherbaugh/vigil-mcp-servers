@@ -1,6 +1,6 @@
 [project]
 name = "vigil-mcp-stepca-responder"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reversible response actions over SSH with short-lived step-ca certificates, for Vigil"
 readme = "README.md"
 license = "Apache-2.0"

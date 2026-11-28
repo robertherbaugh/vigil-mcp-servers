@@ -13,6 +13,8 @@ Reversible response actions for [Vigil](https://github.com/Vigil-SOC/vigil): **b
 | `list_blocks(host)` | read | n/a |
 | `block_ip(host, address, ttl_seconds, reason)` | reversible | `unblock_ip`, and the host lifts it by itself after `ttl_seconds` |
 | `unblock_ip(host, address)` | reversible | `block_ip` |
+| `block_address(address, note)` | reversible | `unblock_address`, and the hosts lift it after `CARRIER_TTL_SECONDS`. **Vigil's `block_ip` act carrier** (below) |
+| `unblock_address(address, note)` | reversible | `block_address` |
 
 ## Layers
 
@@ -24,6 +26,30 @@ The server is the first layer, not the only one. A bug in it, a stolen bearer to
 4. **nftables** expires each block (`set ... flags timeout`), even if the responder never comes back. Blocks don't survive a reboot.
 
 Every request is logged on the host with `logger -t vigil-respond`, so your log collector sends it to the SIEM.
+
+## Vigil's approval pipeline (act carrier)
+
+Vigil's chat only calls read tools. Actions go through its approval pipeline: an agent or the chat proposes the act `block_ip` for an address, a person approves it, and Vigil calls the tool bound as that act's **carrier** with exactly two arguments, the address and a note ([`docs/acts.md`](https://github.com/Vigil-SOC/vigil/blob/v1.2.0/docs/acts.md) upstream). `block_address` has that shape:
+
+- It blocks the address on **every** host in `RESPONDER_HOSTS`, for `CARRIER_TTL_SECONDS` (default 3600). The server's configuration sets the duration, not the model.
+- It is all or nothing: when a host fails, the hosts that succeeded are unblocked again, and the answer's `state` is `failed`.
+- `unblock_address` is its undo (Vigil's "Unblock").
+
+Bind it in Vigil on the tool row `<source>_block_address` (Settings → Limits & autonomy → Outside tools), or with `PUT /api/v1/autonomy/tools/<source>_block_address` and `{"binding": ...}`:
+
+```json
+{
+  "act": "block_ip",
+  "carrier": "Host firewall (vigil-respond)",
+  "takes": ["address"],
+  "id_arg": "address",
+  "note_arg": "note",
+  "act_state": {"read": [{"field": "state", "map": {"blocked": "blocked", "unblocked": "unblocked", "failed": "failed"}}], "default": "failed"},
+  "undo": "unblock_address"
+}
+```
+
+Checked with Vigil 1.2.0's own parser (`core.integrations.bindings.carrier`).
 
 ## step-ca setup
 
@@ -68,6 +94,7 @@ The installer refuses a host without that enrollment, and it never opens SSH by 
 | `NEVER_BLOCK` | none | Comma-separated addresses or CIDRs, never blocked from here (loopback always) |
 | `SSH_USER`, `SSH_PORT` | `vigil-responder`, `22` | |
 | `MIN_TTL_SECONDS`, `MAX_TTL_SECONDS` | `60`, `86400` | The host helper enforces the same bounds |
+| `CARRIER_TTL_SECONDS` | `3600` | How long `block_address` (Vigil's act) blocks |
 | `MCP_TOKEN`, `MCP_ALLOWED_HOSTS`, `MCP_PORT` | | As in the other servers |
 
 Host keys must carry a certificate from the step-ca host CA (`/ssh/roots`): no trust-on-first-use.
