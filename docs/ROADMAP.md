@@ -64,21 +64,22 @@ Vigil's OpenSearch integration does not read, and 5.0 cannot tune a single stand
 ([wazuh-indexer-plugins#1772](https://github.com/wazuh/wazuh-indexer-plugins/issues/1772)).
 When Wazuh ships per-rule exceptions, move each suppression into Wazuh as an exception.
 
-## wazuh5: planned
+## wazuh5: read tools implemented
 
-Investigation tools on Wazuh 5.x: reads from the indexer's `wazuh-events-v5-*`,
-`wazuh-findings-v5-*` and `wazuh-states-*` indices, plus active response through the manager
-API. (Upstream Vigil's Wazuh integration reads only the manager API, and its alerts path targets
-the 4.x `wazuh-alerts-4.x-*` index pattern.)
+[`servers/wazuh5`](../servers/wazuh5): `search_findings`, `search_events`, `get_finding` (with its
+triggering event), `get_event`, `top_values` and `host_inventory`, all `read`, on a read-only
+indexer login. (Upstream Vigil's Wazuh integration reads only the manager API, and its alerts
+path targets the 4.x `wazuh-alerts-4.x-*` index pattern.)
+
+Planned next, through the manager API, as a separate opt-in:
 
 | Tool | Class | Undo |
 |---|---|---|
-| `search_events(query, since)`, `get_agent(id)`, `list_agents` | read | n/a |
+| `list_agents`, `get_agent(id)` | read | n/a |
 | `active_response_firewall_drop(agent_id, srcip, ttl_seconds)` | reversible (Wazuh's own timeout) | Wazuh's timeout |
 | `active_response_disable_account(agent_id, user)` | irreversible until re-enabled by hand | n/a |
 
-Candidate for upstreaming into Vigil as a vendor slice, as Wazuh 5 support for its existing
-integration.
+Candidate for upstreaming into Vigil as Wazuh 5 support for its existing integration.
 
 ## security-onion: later
 

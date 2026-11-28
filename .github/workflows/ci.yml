@@ -49,6 +49,7 @@ jobs:
       matrix:
         include:
           - {server: _template, kind: mcp}
+          - {server: wazuh5, kind: mcp}
           - {server: wazuh5-bridge, kind: worker}
     env:
       SERVER: ${{ matrix.server }}
@@ -63,7 +64,9 @@ jobs:
         run: |
           docker run -d --name smoke --read-only --cap-drop ALL -p 8000:8000 \
             -e MCP_TOKEN="$(openssl rand -base64 32)" -e TARGET_ALLOW=192.0.2.0/24 \
-            -e MCP_ALLOWED_HOSTS='127.0.0.1:*' "$IMAGE"
+            -e MCP_ALLOWED_HOSTS='127.0.0.1:*' \
+            -e WAZUH_INDEXER_URL=https://192.0.2.1:9200 -e WAZUH_INDEXER_USERNAME=ci \
+            -e WAZUH_INDEXER_PASSWORD=ci "$IMAGE"
           for i in $(seq 1 20); do curl -fs http://127.0.0.1:8000/healthz && break; sleep 1; done
           test "$(docker exec smoke id -u)" = 10001
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8000/mcp)" = 401
