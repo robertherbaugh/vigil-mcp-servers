@@ -80,6 +80,7 @@ Every clone of a tagged template can enroll itself. Tag only templates that you 
 | `KIT_PRINCIPAL`, `KIT_NEVER_BLOCK` | `sa-vigil-responder`, empty | The kit's `install.sh` options |
 | `PVE_URL` | (required) | One or more Proxmox API URLs, comma-separated |
 | `PVE_TOKEN_ID`, `PVE_TOKEN_SECRET`, `PVE_CA_FILE` | (required), (required), system CAs | The API token, and the CA file for Proxmox's TLS certificate |
+| `PVE_SOURCE_ADDRESS` | empty | Connect to Proxmox from this local address. Use it with a second interface whose routes apply only to its own source address (CNI `sbr`), so that replies to hosts on that network still leave through the pod's main interface |
 | `INVENTORY_TOKEN` | (required) | At least 32 characters |
 | `STATE_FILE`, `STALE_DAYS` | `/var/lib/host-enroller/inventory.json`, `3` | The hosts list |
 | `TLS_CERT_FILE`, `TLS_KEY_FILE` | (required in production) | The public listener's certificate. The service loads a renewed file within 5 minutes |

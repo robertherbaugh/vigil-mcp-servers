@@ -365,3 +365,11 @@ def test_settings_refuse_bad_values():
         settings(KIT_PRINCIPAL="root")
     with pytest.raises(ValueError):
         settings(KIT_NEVER_BLOCK="not-an-address")
+
+
+def test_source_address_reaches_the_transport():
+    p = Proxmox(
+        urls=["https://pve"], token_id="u@pve!t", token_secret="x", source_address="10.30.10.93"
+    )
+    pool = p._client._transport._pool
+    assert pool._local_address == "10.30.10.93"

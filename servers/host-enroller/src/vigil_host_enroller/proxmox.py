@@ -80,6 +80,7 @@ class Proxmox:
         tag: str = "step-enroll",
         verify: str | bool = True,
         timeout: float = 10.0,
+        source_address: str | None = None,
         cache_seconds: float = 30.0,
         client: httpx.AsyncClient | None = None,
     ):
@@ -88,7 +89,12 @@ class Proxmox:
         self.urls = [u.rstrip("/") for u in urls]
         self.tag = tag.lower()
         self.cache_seconds = cache_seconds
-        self._client = client or httpx.AsyncClient(verify=verify, timeout=timeout)
+        # source_address: connect from this local address, for example a second interface whose
+        # routes apply only to its own source address (CNI sbr). None: the kernel picks.
+        self._client = client or httpx.AsyncClient(
+            timeout=timeout,
+            transport=httpx.AsyncHTTPTransport(verify=verify, local_address=source_address),
+        )
         self._headers = {"Authorization": f"PVEAPIToken={token_id}={token_secret}"}
         self._cache: tuple[float, list[VM]] | None = None
         self._lock = asyncio.Lock()

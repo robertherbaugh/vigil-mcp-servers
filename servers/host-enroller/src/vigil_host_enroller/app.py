@@ -532,6 +532,7 @@ def main(environ: Mapping[str, str] | None = None) -> None:
             token_secret=env["PVE_TOKEN_SECRET"],
             tag=env.get("ENROLL_TAG", "step-enroll"),
             verify=verify,
+            source_address=env.get("PVE_SOURCE_ADDRESS") or None,
         ),
         inventory=Inventory(
             env.get("STATE_FILE", "/var/lib/host-enroller/inventory.json"),
